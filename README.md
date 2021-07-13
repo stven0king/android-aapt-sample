@@ -1,5 +1,7 @@
 ## AAPT概述
 
+从`Android Studio 3.0`开始，`google`默认开启了`aapt2`作为资源编译的编译器，`aapt2`的出现，为资源的增量编译提供了支持。当然使用过程中也会遇到一些问题，我们可以通过在**gradle.properties**中配置**android.enableAapt2=false**来关闭`aapt2`。
+
 ### 资源
 
 `Android` 天生为兼容各种各样不同的设备做了相当多的工作，比如屏幕大小、国际化、键盘、像素密度等等，我们能为各种各样特定的场景下使用特定的资源做兼容而不用改动一行代码，假设我们为各种各样不同的场景适配了不同的资源，如何能快速的应用上这些资源呢？`Android` 为我们提供了 `R` 这个类，指定了一个资源的索引（`id`），然后我们只需要告诉系统在不同的业务场景下，使用对应的资源就好了，至于具体是指定资源里面的哪一个具体文件，由系统根据开发者的配置决定。
@@ -151,7 +153,13 @@ Execution failed for task ':app:mergeDebugResources'.
 </resources>
 ```
 
-## `aapt`进行`id`的固定
+## 资源id固定
+
+资源id的固定在热修复和插件化中极其重要。在热修复中，构建`patch`时，需要保持`patch`包的资源`id`和基准包的资源`id`一致；在插件化中，如果插件需要引用宿主的资源，则需要将宿主的资源`id`进行固定，因此，资源`id`的固定在这两种场景下是尤为重要的。
+
+在`Android Gradle Plugin 3.0.0`中，默认开启了`aapt2`，原先aapt的资源固定方式`public.xml`也将失效，必须寻找一种新的资源固定的方式，而不是简单的禁用掉`aapt`2，因此本文来探讨一下`aapt和aapt2`分别如何进行资源`id`的固定。
+
+### `aapt`进行`id`的固定
 
 > 项目环境配置（PS：吐槽一下aapt已经被aapt2代替了，aapt相关资料几乎没有，环境搭建太费劲了~！）
 >
@@ -165,7 +173,7 @@ Execution failed for task ':app:mergeDebugResources'.
 
 先在`value`文件下按照上面的`ids.xml`和`public.xml`的内容以及文件名，生成对应的文件。
 
-> 什么都不修改的直接编译
+> 直接编译结果
 
 <img src="png/changed.png" style="zoom:50%;" />
 
@@ -199,13 +207,97 @@ afterEvaluate {
 
 > 这是为什么呢？
 
-1. `android gradle`插件`1.3一下`版本可以直接将`public.xml`放在源码`res`目录参与编译;
+1. `android gradle`插件`1.3`以下版本可以直接将`public.xml`放在源码`res`目录参与编译;
 
 2. `android gradle`插件`1.3+`版本在执行`mergeResource`任务时忽略了`public.xml`，所以`merge`完成后的`build`目录下的`res`目录下没有`public.xml`相关的内容。所以需要在编译时通过脚本将`public.xml`插入到`merge`完成后的`build`目录下的`res`目录下。之所以这样做可行，是因为`aapt`本身是支持`public.xml`的，只是`gradle`插件在对资源做预处`(merge)`时对`public.xml`做了过滤。
 
-参考文章：
+### `aapt2`进行`id`的固定
+
+在`aapt2`编译（将资源文件编译为二进制格式）后，发现`merge`的资源都已经经过了预编译，产生了`flat`文件，这时候将`public.xml`文件拷贝至该目录就会产生编译错误。
+
+但在`aapt2`的**链接**阶段中，我们查看相关的**链接选项**：
+
+| 选项                              | 说明                                                         |
+| --------------------------------- | ------------------------------------------------------------ |
+| `--emit-ids path`                 | 在给定的路径下生成一个文件，该文件包含资源类型的名称及其 ID 映射的列表。它适合与 `--stable-ids` 搭配使用。 |
+| `--stable-ids outputfilename.ext` | 使用通过 `--emit-ids` 生成的文件，该文件包含资源类型的名称以及为其分配的 ID 的列表。此选项可以让已分配的 ID 保持稳定，即使您在链接时删除了资源或添加了新资源也是如此。 |
+
+发现`--emit-ids`和`--stable-ids`命令搭配可以实现`id`的固定。
+
+```groovy
+android {
+  aaptOptions {
+        File publicTxtFile = project.rootProject.file('public.txt')
+        //public文件存在，则应用，不存在则生成
+        if (publicTxtFile.exists()) {
+            project.logger.error "${publicTxtFile} exists, apply it."
+            //aapt2添加--stable-ids参数应用
+            aaptOptions.additionalParameters("--stable-ids", "${publicTxtFile}")
+        } else {
+            project.logger.error "${publicTxtFile} not exists, generate it."
+            //aapt2添加--emit-ids参数生成
+            aaptOptions.additionalParameters("--emit-ids", "${publicTxtFile}")
+        }
+    }
+}
+```
+
+1. 第一次编译，先通过`--emit-ids`在项目的根目录生成`public.txt`;
+2. 再将`public.txt`里面对于的`id`改为自己想要固定的`id`;
+3. 再次编译，通过`--stable-ids`和根目录下的`public.txt`进行资源`id`的固定；
+
+> `--emit-ids`编译结果
+
+<img src="png/R-PUBLIC.png" style="zoom:50%;" />
+
+> 修改`public.txt`文件内容再次编译
+
+<img src="png/PUBLIC.png" style="zoom:50%;" />
+
+#### R.txt转public.txt
+
+我们一般正常打包生成的中间产物是`build/intermediates/symbols/debug/R.txt`，需要将其转化为`public.txt`。
+
+> `R.txt`格式（`int`  ` type`  `name`  `id`）或者（`int[]`  `styleable`  `name`  `{id,id,xxxx}`）
+>
+> `public.txt`格式（`applicationId:type/name = id`）
+
+所以在转化过程中需要过滤掉`R.txt`文件中的`styleable`类型。
+
+```java
+android {
+    aaptOptions {
+        File rFile = project.rootProject.file('R.txt')
+        List<String> sortedLines = new ArrayList<>()
+        // 一行一行读取
+        rFile.eachLine {line ->
+            //rLines.add(line)
+            String[] test = line.split(" ")
+            String type = test[1]
+            String name = test[2]
+            String idValue = test[3]
+            if ("styleable" != type) {
+                sortedLines.add("${applicationId}:${type}/${name} = ${idValue}")
+            }
+        }
+        Collections.sort(sortedLines)
+        File publicTxtFile = project.rootProject.file('public.txt')
+        if (!publicTxtFile.exists()) {
+            publicTxtFile.createNewFile()
+            sortedLines?.each {
+                publicTxtFile.append("${it}\n")
+            }
+        }
+    }
+}
+```
+
+
+
+## 参考文章：
 
 [android public.xml 用法](https://www.cnblogs.com/linghu-java/p/9548039.html)
 
 [Android-Gradle笔记](https://ljd1996.github.io/2019/08/21/Android-Gradle%E7%AC%94%E8%AE%B0/)
 
+[aapt2 适配之资源 id 固定](https://fucknmb.com/2017/11/15/aapt2%E9%80%82%E9%85%8D%E4%B9%8B%E8%B5%84%E6%BA%90id%E5%9B%BA%E5%AE%9A/)

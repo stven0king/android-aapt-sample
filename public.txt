@@ -1,0 +1,2 @@
+com.example.aaptdemo:string/string3 = 0x7f050003
+com.example.aaptdemo:string/string2 = 0x7f050002
