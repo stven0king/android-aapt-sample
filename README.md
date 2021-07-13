@@ -1,3 +1,94 @@
+## AAPT概述
+
+### 资源
+
+`Android` 天生为兼容各种各样不同的设备做了相当多的工作，比如屏幕大小、国际化、键盘、像素密度等等，我们能为各种各样特定的场景下使用特定的资源做兼容而不用改动一行代码，假设我们为各种各样不同的场景适配了不同的资源，如何能快速的应用上这些资源呢？`Android` 为我们提供了 `R` 这个类，指定了一个资源的索引（`id`），然后我们只需要告诉系统在不同的业务场景下，使用对应的资源就好了，至于具体是指定资源里面的哪一个具体文件，由系统根据开发者的配置决定。
+
+在这种场景下，假设我们给定的 `id` 是 `x` 值，那么当下业务需要使用这个资源的时候，手机的状态就是 `y` 值，有了(`x,y`)，在一个表里面就能迅速的定位到资源文件的具体路径了。这个表就是 `resources.arsc`，它是从 `aapt` 编译出来的。
+
+其实二进制的资源（比如图片）是不需要编译的，只不过这个“编译”的行为，是为了生成 `resources.arsc` 以及对 `xml` 文件进行二进制化等操作，`resources.arsc` 是上面说的表，`xml` 的二进制化是为了系统读取上性能更好。`AssetManager` 在我们调用 `R` 相关的 `id` 的时候，就会在这个表里面找到对应的文件，读取出来。
+
+`Gradle` 在编译资源的过程中，就是调用的这些[aapt2命令](https://developer.android.com/studio/command-line/aapt2)，传的参数也在这个文档里都介绍了，只不过对开发者隐藏起了调用细节。
+
+`aapt2` 主要分两步，一步叫 `compile`，一步叫 `link`。
+
+创建一个空工程：只写了两个` xml`，分别是 `AndroidManifest.xml` 和 `activity_main.xml`。
+
+### Compile
+
+```shell
+ mkdir compiled
+ aapt2 compile src/main/res/layout/activity_main.xml -o compiled/
+```
+
+在 `compiled` 文件夹中，生成了` layout_activity_main.xml.flat` 这个文件，它是 `aapt2` 特有的，`aapt` 没有(`aapt`拷贝的是源文件)，`aapt2` 用它能进行增量编译。如果我们有很多的文件的话，需要依次调用 `compile` 才行，其实这里也可以使用 `–dir` 参数，只不过这个参数就没有增量编译的效果了。也就是说，当传递整个目录时，即使只有一个资源发生了变化，`AAPT2`也会重新编译目录中的所有文件。
+
+### Link
+
+`link` 的工作量比 `compile` 要多一点，此处的输入是多个` flat` 的文件 和 `AndroidManifest.xml`，外部资源，输出是只包含资源的 `apk` 和 `R.java`。命令如下：
+
+```shell
+aapt2 link -o out.apk \
+-I $ANDROID_HOME/platforms/android-28/android.jar \
+compiled/layout_activity_main.xml.flat \
+--java src/main/java \
+--manifest src/main/AndroidManifest.xml
+```
+
+- 第二行 `-I` 是 `import` 外部资源，此处主要是 `android` 命名空间下定义的一些属性，我们平常使用的`@android:xxx`都是放在这个` jar` 里面，其实我们也可以提供自己的资源供别人链接;
+- 第三行是输入的 `flat` 文件，如果有多个，直接在后面拼接即可;
+- 第四行是 `R.java` 生成的目录;
+- 第五行是指定 `AndroidManifest.xml`;
+
+`Link`完成后会生成`out.apk`和`R.java`，`out.apk`中包含了一个`resources.arsc`文件。只带资源文件的可以用后缀名`.ap_`。
+
+### 查看编译后的资源
+
+除了是用 `Android Studio` 去查看 `resources.arsc`，还可以直接使用 `aapt2 dump apk` 信息的方式来查看资源相关的` ID` 和状态：
+
+```shell
+aapt2 dump out.apk
+```
+
+输出的结果如下：
+
+```shell
+Binary APK
+Package name=com.geminiwen.hello id=7f
+  type layout id=01 entryCount=1
+    resource 0x7f010000 layout/activity_main
+      () (file) res/layout/activity_main.xml type=XML
+```
+
+可以看到` layout/activity_main` 对应的 `ID` 是 `0x7f010000`。
+
+### 资源共享
+
+`android.jar` 只是一个编译用的桩，真正执行的时候，`Android OS` 提供了一个运行时的库(`framework.jar`)。`android.jar`很像一个 `apk`，只不过它存在的是 `class` 文件，然后存在一个 `AndroidManifest.xml` 和 `resources.arsc`。这就意味着我们也可以对它用`aapt2 dump`，执行如下命令：
+
+```shell
+aapt2 dump $ANDROID_HOME/platforms/android-28/android.jar > test.out
+```
+
+得到很多类似如下的输出：
+
+```shell
+resource 0x010a0000 anim/fade_in PUBLIC
+      () (file) res/anim/fade_in.xml type=XML
+    resource 0x010a0001 anim/fade_out PUBLIC
+      () (file) res/anim/fade_out.xml type=XML
+    resource 0x010a0002 anim/slide_in_left PUBLIC
+      () (file) res/anim/slide_in_left.xml type=XML
+    resource 0x010a0003 anim/slide_out_right PUBLIC
+      () (file) res/anim/slide_out_right.xml type=XML
+```
+
+它多了一些PUBLIC的字段，一个 `apk` 文件里面的资源，如果被加上这个标记的话，就能被其他 `apk` 所引用，引用方式是`@包名:类型/名字`，例如：`@android:color/red`。
+
+如果我们想要提供我们的资源，那么首先为我们的资源打上 `PUBLIC` 的标记，然后在 `xml` 中引用你的包名，比如：`@com.gemini.app:color/red` 就能引用到你定义的 `color/red` 了，如果你不指定包名，默认是自己。
+
+至于` AAPT2` 如何生成 `PUBLIC`，感兴趣的可以接着阅读本文。
+
 ## ids.xml概述
 
 `ids.xml`：为应用的相关资源提供唯一的资源`id`。`id`是为了获得`xml`中的对象需要的参数，也就是 `Object = findViewById(R.id.id_name);` 中的`id_name`。
@@ -35,11 +126,19 @@ Execution failed for task ':app:mergeDebugResources'.
 
 ## public.xml概述
 
-这个没有找到官方的具体说明，现有网络上的解释为：文件**RES/value/public.xml**用于将固定资源ID分配给Android资源。
+官方相关的说明[官网：选择要设为公开的资源](https://developer.android.com/studio/projects/android-library#PrivateResources)。
+
+> 原文翻译：库中的所有资源在默认情况下均处于公开状态。如需将所有资源隐式设为私有，您必须至少将一个特定属性定义为公开。资源包括您项目的 `res/` 目录中的所有文件，例如图像。为了防止库的用户访问仅供内部使用的资源，您应该通过声明一个或多个公开资源的方式来使用这种自动私有标识机制。或者，您也可以通过添加空的 `<public />` 标记将所有资源设为私有，此标记不会将任何资源设为公开，而是会将一切（所有资源）都设为私有。
+>
+> 通过将属性隐式设为私有，您不仅可以防止库的用户从内部库资源获得代码补全建议，还可以重命名或移除私有资源，而不会破坏库的客户端。系统会从代码补全中过滤掉私有资源，并且 [Lint](https://developer.android.com/studio/write/lint) 会在您尝试引用私有资源时发出警告。
+>
+> 在构建库时，Android Gradle 插件会获取公开资源定义，并将其提取到 `public.txt` 文件中，然后系统会将此文件打包到 AAR 文件中。
+
+实测结果也仅仅是不回代码自动不全，编译器报红。如果进行`lint`检查，编译都没有警告~！
+
+现在大部分的解释为：文件**RES/value/public.xml**用于将固定资源 `ID` 分配给 `Android` 资源。
 
 [stackoverfloew:What is the use of the res/values/public.xml file on Android?](https://stackoverflow.com/questions/9348614/what-is-the-use-of-the-res-values-public-xml-file-on-android%E3%80%82)
-
-[官网：选择要设为公开的资源](https://developer.android.com/studio/projects/android-library#PrivateResources)
 
 `public.xml`文件内容：
 
