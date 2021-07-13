@@ -1,0 +1,8 @@
+<resources>
+    <string name="app_name">AaptDemo</string>
+    <string name="app_name1">AaptDemo1</string>
+    <string name="app_name2">AaptDemo2</string>
+    <string name="string1">String 1</string>
+    <string name="string2">String 2</string>
+    <string name="string3">String 3</string>
+</resources>

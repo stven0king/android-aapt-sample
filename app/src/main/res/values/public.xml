@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <public name="forecast_list" id="0x7f040001" type="id" />
+    <public name="app_name" id="0x7f070002" type="string" />
+    <public name="string3" id="0x7f070003" type="string" />
+</resources>

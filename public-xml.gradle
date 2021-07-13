@@ -1,0 +1,42 @@
+afterEvaluate {
+    for (variant in android.applicationVariants) {
+        def scope = variant.getVariantData().getScope()
+        String mergeTaskName = scope.getMergeResourcesTask().name
+        def mergeTask = tasks.getByName(mergeTaskName)
+
+        mergeTask.doLast {
+            copy {
+                int i=0
+                from(android.sourceSets.main.res.srcDirs) {
+                    include 'values/public.xml'
+                    rename 'public.xml', (i++ == 0? "public.xml": "public_${i}.xml")
+                }
+                //[/Users/tanzx/AndroidStudioProjects/AaptDemo/app/src/main/res]
+                println("tanzhenxing:${android.sourceSets.main.res.srcDirs}")
+                ///Users/tanzx/AndroidStudioProjects/AaptDemo/app/build/intermediates/res/merged/debug
+                println("tanzhenxing:${mergeTask.outputDir}")
+                into(mergeTask.outputDir)
+            }
+        }
+        getResOutputDir(getProcessResourcesTask(project, variant))
+    }
+}
+static def getProcessResourcesTask(project, variant) {
+    return project.tasks.findByName("process${variant.name.capitalize()}Resources")
+}
+/**
+ * 获取资源输出目录
+ * @param processResources
+ */
+static void getResOutputDir(Object processResources) {
+    File resDir = null
+    if (processResources.properties['resDir'] != null) {
+        resDir = processResources.resDir
+    } else if (processResources.properties['inputResourcesDir'] != null) {
+        resDir = processResources.inputResourcesDir.getFiles().first()
+    }
+    String str = resDir.absolutePath
+    //str=/Users/tanzx/AndroidStudioProjects/AaptDemo/app/build/intermediates/res/merged/debug
+    //str=/Users/tanzx/AndroidStudioProjects/AaptDemo/app/build/intermediates/res/merged/release
+    println("tanzhenxing:str=${str}")
+}
