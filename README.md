@@ -85,7 +85,7 @@ resource 0x010a0000 anim/fade_in PUBLIC
       () (file) res/anim/slide_out_right.xml type=XML
 ```
 
-它多了一些PUBLIC的字段，一个 `apk` 文件里面的资源，如果被加上这个标记的话，就能被其他 `apk` 所引用，引用方式是`@包名:类型/名字`，例如：`@android:color/red`。
+它多了一些`PUBLIC`的字段，一个 `apk` 文件里面的资源，如果被加上这个标记的话，就能被其他 `apk` 所引用，引用方式是`@包名:类型/名字`，例如：`@android:color/red`。
 
 如果我们想要提供我们的资源，那么首先为我们的资源打上 `PUBLIC` 的标记，然后在 `xml` 中引用你的包名，比如：`@com.gemini.app:color/red` 就能引用到你定义的 `color/red` 了，如果你不指定包名，默认是自己。
 
@@ -292,7 +292,21 @@ android {
 }
 ```
 
+## PUBLIC标记
 
+在`AAPT概述`这部分我们讲过如果一个 `apk` 文件里面的资源，如果被加上`PUBLIC`标记的话，就能被其他 `apk` 所引用，引用方式是`@包名:类型/名字`，例如：`@android:color/red`。
+
+阅读上面《`aapt`进行`id`的固定》到《`aapt2`进行`id`的固定》这两部分，我们知道`aapt`和`aapt2`进行`id`固定的方法是不相同的。
+
+其实如果我们用`aapt2 dump build/intermediates/res/resources-debug.ap_`命令查看生成资源的相关信息。
+
+`aapt`通过`public.xml`进行`id`固定的资源信息有`PUBLIC`标记：
+
+<img src="png/public-flag.png" style="zoom:50%;" />
+
+二使用上面`aapt2`进行`id`固定的方式是没有下图中的`PUBLIC`标记的。
+
+原因还是`aapt`和`aapt2`的差异造成的，`aapt2`的`public.txt`不等于`aapt`的`public.xml`，在`aapt2`中如果要添加`PUBLIC`标记，其实还是得另寻其他途径。
 
 ## 参考文章：
 
