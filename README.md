@@ -1,6 +1,20 @@
+## 前言
+
+整片文章是围绕 `tinker` 的 `TinkerResourceIdTask` 里的知识点进行扩展的。
+
+1. `aapt` 和 `aapt2` 的差异（运行环境和运行结果）；
+2. 资源 `id` 的固定；
+3. 进行 `PUBLIC` 的标记；
+
+`aapt` 运行环境为 `gradle:2.2.0` 和 `gradle-wrapper:3.4.1`
+
+`aapt2` 运行环境为 `gradle:3.3.2` 和 `gradle-wrapper:5.6.2`
+
+[android-aapt-sample]([android-aapt-sample](https://github.com/stven0king/android-aapt-sample)) 项目是我自己的实验样例。有 `aapt` 和 `aapt2` 两个分支，分别对应其实现。
+
 ## AAPT概述
 
-从`Android Studio 3.0`开始，`google`默认开启了`aapt2`作为资源编译的编译器，`aapt2`的出现，为资源的增量编译提供了支持。当然使用过程中也会遇到一些问题，我们可以通过在**gradle.properties**中配置**android.enableAapt2=false**来关闭`aapt2`。
+从 `Android Studio 3.0` 开始，`google` 默认开启了 `aapt2` 作为资源编译的编译器，`aapt2` 的出现，为资源的增量编译提供了支持。当然使用过程中也会遇到一些问题，我们可以通过在 **gradle.properties** 中配置 **android.enableAapt2=false** 来关闭 `aapt2`。
 
 ### 资源
 
@@ -85,7 +99,7 @@ resource 0x010a0000 anim/fade_in PUBLIC
       () (file) res/anim/slide_out_right.xml type=XML
 ```
 
-它多了一些PUBLIC的字段，一个 `apk` 文件里面的资源，如果被加上这个标记的话，就能被其他 `apk` 所引用，引用方式是`@包名:类型/名字`，例如：`@android:color/red`。
+它多了一些`PUBLIC`的字段，一个 `apk` 文件里面的资源，如果被加上这个标记的话，就能被其他 `apk` 所引用，引用方式是`@包名:类型/名字`，例如：`@android:color/red`。
 
 如果我们想要提供我们的资源，那么首先为我们的资源打上 `PUBLIC` 的标记，然后在 `xml` 中引用你的包名，比如：`@com.gemini.app:color/red` 就能引用到你定义的 `color/red` 了，如果你不指定包名，默认是自己。
 
@@ -292,9 +306,140 @@ android {
 }
 ```
 
+## PUBLIC标记
 
+在`AAPT概述`这部分我们讲过如果一个 `apk` 文件里面的资源，如果被加上`PUBLIC`标记的话，就能被其他 `apk` 所引用，引用方式是`@包名:类型/名字`，例如：`@android:color/red`。
 
-## 参考文章：
+阅读上面《`aapt`进行`id`的固定》到《`aapt2`进行`id`的固定》这两部分，我们知道`aapt`和`aapt2`进行`id`固定的方法是不相同的。
+
+其实如果我们用`aapt2 dump build/intermediates/res/resources-debug.ap_`命令查看生成资源的相关信息。
+
+`aapt`通过`public.xml`进行`id`固定的资源信息有`PUBLIC`标记：
+
+<img src="png/public-flag.png" style="zoom:50%;" />
+
+二使用上面`aapt2`进行`id`固定的方式是没有下图中的`PUBLIC`标记的。
+
+原因还是`aapt`和`aapt2`的差异造成的，`aapt2`的`public.txt`不等于`aapt`的`public.xml`，在`aapt2`中如果要添加`PUBLIC`标记，其实还是得另寻其他途径。
+
+### 回顾思考
+
+> 回顾
+
+1. `aapt` 进行资源 `id` 固定和 `PUBLIC` 标价，是将`public.xml` 复制到 `${mergeResourceTask.outputDir}`;
+2. `aapt2` 相比于 `aapt`  ，做了增量编译的优化。`AAPT2` 会解析该文件并生成一个扩展名为 `.flat` 的中间二进制文件。
+
+![](png/res-flat.png)
+
+> 思考
+
+能否使用`aapt2`自己将`public.xml`编译为`public.arsc.flat`，并像 `aapt` 操作一样将其复制到  `${mergeResourceTask.outputDir}`;
+
+### 动手实践
+
+```groovy
+android {
+    //将public.txt转化为public.xml，并对public.xml进行aapt2的编译将结果复制到${ergeResourceTask.outputDir}
+  //下面大部分代码是copy自tinker的源码
+  applicationVariants.all { def variant ->
+      def mergeResourceTask = project.tasks.findByName("merge${variant.getName().capitalize()}Resources")
+      if (mergeResourceTask) {
+          mergeResourceTask.doLast {
+              //目标转换文件，注意public.xml上级目录必须带values目录，否则aapt2执行时会报非法文件路径
+              File publicXmlFile = new File(project.buildDir, "intermediates/res/public/${variant.getDirName()}/values/public.xml")
+              //转换public.txt文件为publicXml文件，最后一个参数true标识固定资源id
+              convertPublicTxtToPublicXml(project.rootProject.file('public.txt'), publicXmlFile, false)
+              def variantData = variant.getMetaClass().getProperty(variant, 'variantData')
+              def variantScope = variantData.getScope()
+              def globalScope = variantScope.getGlobalScope()
+              def androidBuilder = globalScope.getAndroidBuilder()
+              def targetInfo = androidBuilder.getTargetInfo()
+              def mBuildToolInfo = targetInfo.getBuildTools()
+              Map<BuildToolInfo.PathId, String> mPaths = mBuildToolInfo.getMetaClass().getProperty(mBuildToolInfo, "mPaths") as Map<BuildToolInfo.PathId, String>
+                //通过aapt2 compile命令自己生成public.arsc.flat并输出到${mergeResourceTask.outputDir}
+              project.exec(new Action<ExecSpec>() {
+                  @Override
+                  void execute(ExecSpec execSpec) {
+                      execSpec.executable "${mPaths.get(BuildToolInfo.PathId.AAPT2)}"
+                      execSpec.args("compile")
+                      execSpec.args("--legacy")
+                      execSpec.args("-o")
+                      execSpec.args("${mergeResourceTask.outputDir}")
+                      execSpec.args("${publicXmlFile}")
+                  }
+              })
+          }
+      }
+  }
+}
+```
+
+将`public.txt`文件转化为`public.xml`文件.
+
+> - `public.txt`中存在`styleable`类型资源，`public.xml`中不存在，因此转换过程中如果遇到`styleable`类型，需要忽略;
+> - `vector`矢量图资源如果存在内部资源，也需要忽略，在`aapt2`中，它的名字是以`$`开头，然后是主资源名，紧跟着__数字递增索引，这些资源外部是无法引用到的，只需要固定`id`，不需要添加`PUBLIC`标记，并且`$`符号在`public.xml`中是非法的，因此忽略它即可;
+> - 由于`aapt2`有资源`id`的固定方式，因此转换过程中可直接丢掉`id`，简单声明即可（PS：这里通过`withId`参数控制是否需要固定`id`）;
+> - `aapt2`编译的`public.xml`文件的上级目录必须是`values`文件夹，否则编译过程会报非法路径;
+
+```groovy
+/**
+ * 转换publicTxt为publicXml
+ * copy tinker:com.tencent.tinker.build.gradle.task.TinkerResourceIdTask#convertPublicTxtToPublicXml
+ */
+@SuppressWarnings("GrMethodMayBeStatic")
+void convertPublicTxtToPublicXml(File publicTxtFile, File publicXmlFile, boolean withId) {
+    if (publicTxtFile == null || publicXmlFile == null || !publicTxtFile.exists() || !publicTxtFile.isFile()) {
+        throw new GradleException("publicTxtFile ${publicTxtFile} is not exist or not a file")
+    }
+
+    GFileUtils.deleteQuietly(publicXmlFile)
+    GFileUtils.mkdirs(publicXmlFile.getParentFile())
+    GFileUtils.touch(publicXmlFile)
+
+    project.logger.info "convert publicTxtFile ${publicTxtFile} to publicXmlFile ${publicXmlFile}"
+
+    publicXmlFile.append("<!-- AUTO-GENERATED FILE.  DO NOT MODIFY -->")
+    publicXmlFile.append("\n")
+    publicXmlFile.append("<resources>")
+    publicXmlFile.append("\n")
+    Pattern linePattern = Pattern.compile(".*?:(.*?)/(.*?)\\s+=\\s+(.*?)")
+
+    publicTxtFile.eachLine {def line ->
+        Matcher matcher = linePattern.matcher(line)
+        if (matcher.matches() && matcher.groupCount() == 3) {
+            String resType = matcher.group(1)
+            String resName = matcher.group(2)
+            if (resName.startsWith('$')) {
+                project.logger.info "ignore to public res ${resName} because it's a nested resource"
+            } else if (resType.equalsIgnoreCase("styleable")) {
+                project.logger.info "ignore to public res ${resName} because it's a styleable resource"
+            } else {
+                if (withId) {
+                    publicXmlFile.append("\t<public type=\"${resType}\" name=\"${resName}\" id=\"${matcher.group(3)}\" />\n")
+                } else {
+                    publicXmlFile.append("\t<public type=\"${resType}\" name=\"${resName}\" />\n")
+                }
+
+            }
+        }
+    }
+    publicXmlFile.append("</resources>")
+}
+```
+
+以上思考和动手实践的过程，我们不仅解决了`aapt2`进行`PUBLIC`标记的问题，还找到了一种新的`aapt2`进行`id`固定的方法。
+
+可能遇到的报错：
+
+```java
+no signature of method com.android.build.gradle.internal.variant.applicationvariantdata.getscope() is applicable for argument types: () values: []
+```
+
+解决方法为修改`gradle` 版本为 `gradle:3.3.2` 和 `gradle-wrapper:5.6.2` ，毕竟 `tinker` 也不支持最新版的 `gradle` .
+
+## 参考：
+
+[Github:tinker](https://github.com/Tencent/tinker.git)
 
 [android public.xml 用法](https://www.cnblogs.com/linghu-java/p/9548039.html)
 
