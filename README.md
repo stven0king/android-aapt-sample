@@ -308,6 +308,11 @@ android {
 
 原因还是`aapt`和`aapt2`的差异造成的，`aapt2`的`public.txt`不等于`aapt`的`public.xml`，在`aapt2`中如果要添加`PUBLIC`标记，其实还是得另寻其他途径。
 
+### 回顾思考
+
+1. `aapt` 进行资源 `id` 固定和 `PUBLIC` 标价，是将`public.xml` 复制到 `${mergeResourceTask.outputDir}`;
+2. `aapt2` 相比于 `aapt`  ，做了增量编译的优化。`AAPT2` 会解析该文件并生成一个扩展名为 `.flat` 的中间二进制文件。
+
 ## 参考文章：
 
 [android public.xml 用法](https://www.cnblogs.com/linghu-java/p/9548039.html)
